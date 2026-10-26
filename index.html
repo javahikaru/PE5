@@ -100,6 +100,18 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
 .gate input { font: inherit; font-size: 24px; letter-spacing: .3em; text-align: center; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
 .gate button { border: 0; border-radius: 10px; padding: 14px; font: inherit; font-size: 18px; font-weight: 900; background: var(--court); color: var(--court-ink); cursor: pointer; }
 .gate .err { color: var(--warn); font-weight: 700; min-height: 1.4em; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chips button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-weight: 700; padding: 8px 12px; border-radius: 999px; cursor: pointer; }
+.chips button[aria-pressed="true"] { background: var(--court); color: var(--court-ink); border-color: var(--court); }
+.sets { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.sets button { border: 1px solid var(--line); background: var(--panel); color: var(--ink); font-family: var(--font-num); font-size: 22px; font-weight: 700; padding: 8px 0; border-radius: 10px; cursor: pointer; }
+.sets button[aria-pressed="true"] { background: var(--ink); color: var(--bg); }
+.ans { display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; align-items: baseline; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.ans:last-child { border-bottom: 0; }
+.ans .lv { font-weight: 900; color: var(--muted); font-size: 13px; }
+.ans .q { font-size: 13px; color: var(--muted); }
+.ans .a { grid-column: 2; font-size: 26px; font-weight: 900; line-height: 1.25; }
+.ans .n { grid-column: 2; font-size: 12px; color: var(--muted); line-height: 1.5; }
 </style>
 </head>
 <body>
@@ -111,6 +123,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     <span class="conn" id="conn">接続中…</span>
     <div class="tabs" role="tablist">
       <button id="tab-gm" role="tab" aria-selected="true">GM用</button>
+      <button id="tab-ans" role="tab" aria-selected="false">答え</button>
       <button id="tab-agg" role="tab" aria-selected="false">集計用</button>
     </div>
   </header>
@@ -163,6 +176,16 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
         <button class="big" id="resetno" style="min-height:40px;padding:8px 14px;background:var(--line);color:var(--ink)">やめる</button>
       </div>
     </div>
+  </section>
+
+  <!-- ===== 答え ===== -->
+  <section id="view-ans" class="wrap" hidden style="gap:12px;width:100%">
+    <div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <div class="chips" id="anscat"></div>
+      <div class="sets" id="anssets"></div>
+    </div>
+    <div class="card" id="ansbody"></div>
+    <div class="note">チームに画面を見せないように注意してください。1回の挑戦で1セット（易・中・難）を出し、2問正解でクリア。やり直しは次のセットです。</div>
   </section>
 
   <!-- ===== 集計 ===== -->
@@ -359,18 +382,50 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     $('courtbody').innerHTML = out.join('');
   }
 
+  // ===== answers =====
+  let ANS = null;
+  const CATS = ['漢字', '国旗', '元素', 'クイズ', '早口言葉', '答え合わせ'];
+  let cat = load('anscat', '漢字'), set = load('ansset', 1);
+  const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+  async function loadAnswers() {
+    if (ANS || !PIN) return;
+    const { data, error } = await db.rpc('get_answers', { p_pin: PIN });
+    if (error || !data) { $('ansbody').innerHTML = '<div class="note">答えを読み込めませんでした。電波を確認して、タブを開き直してください。</div>'; return; }
+    ANS = data; ansRender();
+  }
+  function ansRender() {
+    if (!ANS) { $('anscat').innerHTML = ''; $('anssets').innerHTML = ''; $('ansbody').innerHTML = '<div class="note">読み込み中…</div>'; loadAnswers(); return; }
+    $('anscat').innerHTML = CATS.map((c) => `<button aria-pressed="${c === cat}" data-c="${c}">${c}</button>`).join('');
+    $('anscat').querySelectorAll('button').forEach((b) => b.onclick = () => { cat = b.dataset.c; save('anscat', cat); ansRender(); });
+    const hasSets = ['漢字', '国旗', '元素', 'クイズ'].includes(cat);
+    $('anssets').hidden = !hasSets;
+    if (hasSets) {
+      $('anssets').innerHTML = [1,2,3,4,5,6,7,8,9,10].map((n) => `<button aria-pressed="${n === set}" data-n="${n}" aria-label="セット${n}">${n}</button>`).join('');
+      $('anssets').querySelectorAll('button').forEach((b) => b.onclick = () => { set = +b.dataset.n; save('ansset', set); ansRender(); });
+      $('ansbody').innerHTML = `<div class="note">${cat}　セット${set}</div>` + ANS[cat].filter((r) => r.s === set).map((r) =>
+        `<div class="ans"><span class="lv">${r.lv}</span><span class="q">${esc(r.q)}</span><span class="a">${esc(r.a)}</span>${r.n ? `<span class="n">※${esc(r.n)}</span>` : ''}</div>`).join('');
+    } else if (cat === '早口言葉') {
+      $('ansbody').innerHTML = '<div class="note">前から順に、難しくなります</div>' + ANS[cat].map((r) =>
+        `<div class="ans"><span class="lv">${r.s}</span><span class="a" style="font-size:20px">${esc(r.t)}</span><span class="n">${esc(r.r)}</span></div>`).join('');
+    } else {
+      $('ansbody').innerHTML = '<div class="note">全員の答えが同じならクリア（1ターン3回まで）。使うお題はGMが選んでかまいません</div>' + ANS[cat].map((t, i) =>
+        `<div class="ans"><span class="lv">${i + 1}</span><span class="a" style="font-size:20px">${esc(t)}</span></div>`).join('');
+    }
+  }
+
   function show(which) {
-    $('view-gm').hidden = which !== 'gm'; $('view-agg').hidden = which !== 'agg';
-    $('tab-gm').setAttribute('aria-selected', which === 'gm'); $('tab-agg').setAttribute('aria-selected', which === 'agg');
+    $('view-gm').hidden = which !== 'gm'; $('view-agg').hidden = which !== 'agg'; $('view-ans').hidden = which !== 'ans'; if (which === 'ans') ansRender();
+    $('tab-gm').setAttribute('aria-selected', which === 'gm'); $('tab-agg').setAttribute('aria-selected', which === 'agg'); $('tab-ans').setAttribute('aria-selected', which === 'ans');
     save('tab', which);
   }
   $('tab-gm').onclick = () => show('gm');
   $('tab-agg').onclick = () => show('agg');
+  $('tab-ans').onclick = () => show('ans');
 
   db.channel('events').on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => refresh()).subscribe();
   setInterval(refresh, 10000);   // リアルタイムが切れても10秒ごとに取り直す
   gate(); render(); refresh();
-  show(location.hash === '#shukei' ? 'agg' : location.hash === '#gm' ? 'gm' : (load('tab', 'gm') === 'agg' ? 'agg' : 'gm'));
+  show(location.hash === '#shukei' ? 'agg' : location.hash === '#gm' ? 'gm' : (['gm','agg','ans'].includes(load('tab', 'gm')) ? load('tab', 'gm') : 'gm'));
 })();
 </script>
 
