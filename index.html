@@ -85,6 +85,13 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
 .ans .q { font-size: 13px; color: var(--muted); }
 .ans .a { grid-column: 2; font-size: 26px; font-weight: 900; line-height: 1.25; }
 .ans .n { grid-column: 2; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.conn { font-size: 12px; font-weight: 700; padding: 3px 8px; border-radius: 999px; border: 1px solid var(--line); color: var(--muted); }
+.conn.ok { color: var(--court); border-color: var(--court); }
+.conn.ng { color: var(--warn); border-color: var(--warn); }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); background: var(--warn); color: #fff; padding: 10px 16px; border-radius: 10px; font-weight: 700; max-width: calc(100% - 32px); z-index: 20; }
+.pin { display: flex; gap: 8px; align-items: end; }
+.pin input { font: inherit; font-size: 16px; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; }
 </style>
 </head>
 <body>
@@ -93,6 +100,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
 <div class="wrap">
   <header>
     <h1>スポーツ神経衰弱　スコアボード</h1>
+    <span class="conn" id="conn">接続中…</span>
     <div class="tabs" role="tablist">
       <button id="tab-gm" role="tab" aria-selected="true">GM用</button>
       <button id="tab-agg" role="tab" aria-selected="false">集計用</button>
@@ -105,6 +113,10 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
       <label class="sel">試合<select id="game"><option value="1">第1試合</option><option value="2">第2試合</option></select></label>
       <label class="sel">コート<select id="court"><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
       <label class="sel">先攻（じゃんけんの勝ち）<select id="first"></select></label>
+    </div>
+    <div class="card pin" id="pinrow">
+      <label class="sel">GM用PIN<input id="pin" type="password" inputmode="numeric" autocomplete="off"></label>
+      <button class="big" id="pinbtn" style="min-height:44px;padding:8px 16px;background:var(--court);color:var(--court-ink)">確認</button>
     </div>
 
     <div class="card" style="display:flex;flex-direction:column;gap:10px">
@@ -151,39 +163,48 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
 
   <!-- ===== 集計 ===== -->
   <section id="view-agg" class="wrap" hidden style="gap:12px;width:100%">
-    <div class="card note">各コートのGMが見せる「得点・クリア数・ペア数」を、チームごとに入れてください。順位は「合計得点 → クリア数 → ペア数」の順に自動で決まります。それでも同じならじゃんけんです。</div>
-    <div class="card scroll">
-      <table class="agg">
-        <thead>
-          <tr><th rowspan="2">チーム</th><th colspan="3" style="text-align:center">第1試合</th><th colspan="3" style="text-align:center">第2試合</th></tr>
-          <tr><th>得点</th><th>クリア</th><th>ペア</th><th>得点</th><th>クリア</th><th>ペア</th></tr>
-        </thead>
-        <tbody id="aggbody"></tbody>
-      </table>
-    </div>
+    <div class="card note">4コートのGMが押した点数が、自動で集まります。順位は「合計得点 → クリア数 → ペア数」の順に決まり、それでも同じならじゃんけんです。</div>
     <div class="card">
       <table class="rank">
-        <thead><tr><th>順位</th><th>チーム</th><th>合計得点</th><th>クリア数</th><th>ペア数</th></tr></thead>
+        <thead><tr><th>順位</th><th>チーム</th><th>第1試合</th><th>第2試合</th><th>合計</th><th>クリア</th><th>ペア</th></tr></thead>
         <tbody id="rankbody"></tbody>
+      </table>
+    </div>
+    <div class="card scroll">
+      <table>
+        <thead><tr><th>試合・コート</th><th>チーム</th><th>得点</th><th>クリア</th><th>ペア</th></tr></thead>
+        <tbody id="courtbody"></tbody>
       </table>
     </div>
   </section>
 </div>
 
+<div class="toast" id="toast" hidden></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.79.0/dist/umd/supabase.js"></script>
 <script>
 (function () {
+  const SUPABASE_URL = 'https://evxvzpdyorkemwkctjlw.supabase.co';
+  const SUPABASE_KEY = 'sb_publishable_aYGAvi6ozpUNFC1ePgBchw_xE3Wr3Mz';
+  const db = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
   const MATCH = { 1: { A: [1, 2], B: [3, 4], C: [5, 6], D: [7, 8] }, 2: { A: [5, 8], B: [6, 7], C: [1, 4], D: [2, 3] } };
   const TURN = 180, GIVE_AFTER = 120;
   const $ = (id) => document.getElementById(id);
   const load = (k, d) => { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } };
   const save = (k, v) => { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} };
 
-  let S = load('gm', null) || { game: 1, court: 'A', first: null, turnTeam: null, start: null, dbl: false, last6: false, events: [], finished: false };
-  let A = load('agg', {});
+  // ローカルに残すのはタイマーと手番だけ。得点はデータベース。
+  let S = load('gm2', null) || { game: 1, court: 'A', first: null, turnTeam: null, start: null, dbl: false, last6: false, finished: false };
+  let PIN = load('pin', '');
+  let EV = [];          // このコート・試合の記録
+  let RESULTS = [];     // 集計ビュー
+  let ALLEV = [];       // 全コートの記録（集計用）
 
-  function teams() { return MATCH[S.game][S.court]; }
-  function persist() { save('gm', S); }
-  function other(t) { const [a, b] = teams(); return t === a ? b : a; }
+  const teams = () => MATCH[S.game][S.court];
+  const persist = () => save('gm2', S);
+  const other = (t) => { const [a, b] = teams(); return t === a ? b : a; };
+
+  function toast(msg) { const t = $('toast'); t.textContent = msg; t.hidden = false; clearTimeout(toast.h); toast.h = setTimeout(() => (t.hidden = true), 3500); }
+  function setConn(ok, text) { const c = $('conn'); c.className = 'conn ' + (ok ? 'ok' : 'ng'); c.textContent = text; }
 
   let firstKey = '';
   function fillFirst() {
@@ -196,14 +217,12 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
   }
 
   function tally() {
-    const r = {};
-    teams().forEach((t) => (r[t] = { pts: 0, clears: 0, pairs: 0 }));
-    S.events.forEach((e) => { if (!r[e.team]) return; r[e.team].pts += e.pts; if (e.type === 'pair') r[e.team].pairs++; else r[e.team].clears++; });
+    const r = {}; teams().forEach((t) => (r[t] = { pts: 0, clears: 0, pairs: 0 }));
+    EV.forEach((e) => { if (!r[e.team]) return; r[e.team].pts += e.points; if (e.kind === 'pair') r[e.team].pairs++; else r[e.team].clears++; });
     return r;
   }
-
-  function elapsed() { return S.start ? (Date.now() - S.start) / 1000 : 0; }
-  function fmt(sec) { sec = Math.max(0, Math.ceil(sec)); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); }
+  const elapsed = () => (S.start ? (Date.now() - S.start) / 1000 : 0);
+  const fmt = (sec) => { sec = Math.max(0, Math.ceil(sec)); return Math.floor(sec / 60) + ':' + String(sec % 60).padStart(2, '0'); };
 
   let beeped = false, actx = null;
   function beep() {
@@ -215,86 +234,116 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
   }
 
   function render() {
-    $('game').value = S.game; $('court').value = S.court;
-    fillFirst();
+    $('game').value = S.game; $('court').value = S.court; fillFirst();
+    $('pinrow').hidden = !!PIN;
     const running = !!S.start && !S.finished;
-    $('turnteam').innerHTML = S.finished ? '<small>試合終了</small>結果を集計係へ' : `<small>いまのターン</small>チーム${S.turnTeam}`;
+    $('turnteam').innerHTML = S.finished ? '<small>試合終了</small>おつかれさまでした' : `<small>いまのターン</small>チーム${S.turnTeam}`;
     $('dblbadge').hidden = !(running && S.dbl);
     $('startbtn').hidden = running || S.finished;
+    $('startbtn').disabled = !PIN;
     $('pad').hidden = !running;
     $('clearpts').textContent = S.dbl ? '＋2（2倍）' : '＋1';
     const el = elapsed();
     $('timer').textContent = running ? fmt(TURN - el) : '3:00';
     $('timer').classList.toggle('over', running && el >= TURN);
     $('givebtn').disabled = !(running && el >= GIVE_AFTER);
-    const st = $('status');
-    st.classList.remove('alert');
-    if (S.finished) st.textContent = '試合終了。下の得点表を集計係に見せてください';
+    const st = $('status'); st.classList.remove('alert');
+    if (!PIN) st.textContent = '最初にGM用PINを入れてください';
+    else if (S.finished) st.textContent = '試合終了。得点は自動で集計されています';
     else if (running && el >= TURN) { st.textContent = '時間切れ。挑戦中のお題は0点です。「ターン終了」を押してください'; st.classList.add('alert'); }
     else if (running) st.textContent = el >= GIVE_AFTER ? 'ギブアップできます' : 'ペアがそろったら「ペア成立」、お題をクリアしたら「お題クリア」';
     else st.textContent = S.last6 ? '残り6分を過ぎたので、次のターンからお題の点が2倍です' : '「スタート」でこのチームの持ち時間3分が始まります';
     $('last6btn').classList.toggle('on', S.last6);
     $('last6btn').textContent = S.last6 ? '残り6分：合図済み（次のターンから2倍）' : '残り6分の合図を出した';
-
     const r = tally();
     $('board').innerHTML = teams().map((t) => `<tr class="${t === S.turnTeam && !S.finished ? 'now' : ''}"><td>チーム${t}</td><td class="pts">${r[t].pts}</td><td>${r[t].clears}</td><td>${r[t].pairs}</td></tr>`).join('');
-    $('log').innerHTML = S.events.slice().reverse().slice(0, 30).map((e) =>
-      `<div>チーム${e.team}：${e.type === 'pair' ? 'ペア成立' : 'お題クリア'} ＋${e.pts}${e.dbl ? '（2倍）' : ''}</div>`).join('') || '<div>まだ記録はありません</div>';
+    $('log').innerHTML = EV.slice().reverse().slice(0, 30).map((e) =>
+      `<div>${new Date(e.created_at).toLocaleTimeString('ja-JP', { hour: '2-digit', minute: '2-digit' })}　チーム${e.team}：${e.kind === 'pair' ? 'ペア成立' : 'お題クリア'} ＋${e.points}${e.doubled ? '（2倍）' : ''}</div>`).join('') || '<div>まだ記録はありません</div>';
   }
 
-  function tick() {
-    if (S.start && !S.finished) {
-      if (elapsed() >= TURN && !beeped) { beeped = true; beep(); }
-      $('timer').textContent = fmt(TURN - elapsed());
-      render();
-    }
-  }
-  setInterval(tick, 250);
+  setInterval(() => { if (S.start && !S.finished) { if (elapsed() >= TURN && !beeped) { beeped = true; beep(); } render(); } }, 250);
 
   let wake = null;
   async function keepAwake() { try { if (navigator.wakeLock && !wake) { wake = await navigator.wakeLock.request('screen'); wake.addEventListener('release', () => (wake = null)); } } catch (e) {} }
-  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') keepAwake(); });
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') { keepAwake(); refresh(); } });
 
+  // ===== データベース =====
+  async function refresh() {
+    const [a, b] = await Promise.all([
+      db.from('events').select('*').order('id'),
+      db.from('team_results').select('*'),
+    ]);
+    if (a.error || b.error) { setConn(false, '未接続'); return; }
+    setConn(true, '接続中');
+    ALLEV = a.data; RESULTS = b.data;
+    EV = ALLEV.filter((e) => e.game === S.game && e.court === S.court);
+    render(); rank();
+  }
+  async function call(fn, args) {
+    const { data, error } = await db.rpc(fn, { p_pin: PIN, ...args });
+    if (error) {
+      if (/PIN/.test(error.message)) { PIN = ''; save('pin', ''); render(); toast('PINが違います。入れ直してください'); }
+      else toast('送れませんでした。電波を確認して、もう一度押してください');
+      return null;
+    }
+    await refresh();
+    return data;
+  }
+  let busy = false;
+  async function addEvent(kind) {
+    if (busy) return; busy = true;
+    await call('add_event', { p_game: S.game, p_court: S.court, p_team: S.turnTeam, p_kind: kind, p_doubled: S.dbl });
+    busy = false;
+  }
+
+  $('pinbtn').onclick = async () => {
+    const p = $('pin').value.trim(); if (!p) return;
+    const { data, error } = await db.rpc('check_pin', { p_pin: p });
+    if (error) { toast('確認できませんでした。電波を確認してください'); return; }
+    if (!data) { toast('PINが違います'); return; }
+    PIN = p; save('pin', p); $('pin').value = ''; render();
+  };
   $('startbtn').onclick = () => { S.start = Date.now(); S.dbl = S.last6; beeped = false; keepAwake();
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} persist(); render(); };
-  $('pairbtn').onclick = () => { S.events.push({ team: S.turnTeam, type: 'pair', pts: 3, dbl: false }); persist(); render(); };
-  $('clearbtn').onclick = () => { S.events.push({ team: S.turnTeam, type: 'clear', pts: S.dbl ? 2 : 1, dbl: S.dbl }); persist(); render(); };
+  $('pairbtn').onclick = () => addEvent('pair');
+  $('clearbtn').onclick = () => addEvent('clear');
   function endTurn() { S.start = null; S.turnTeam = other(S.turnTeam); persist(); render(); }
   $('endbtn').onclick = endTurn;
   $('givebtn').onclick = endTurn;
-  $('undobtn').onclick = () => { S.events.pop(); persist(); render(); };
+  $('undobtn').onclick = () => call('undo_last', { p_game: S.game, p_court: S.court });
   $('last6btn').onclick = () => { S.last6 = !S.last6; persist(); render(); };
   $('finishbtn').onclick = () => { S.start = null; S.finished = true; persist(); render(); };
   $('resetbtn').onclick = () => { $('resetconfirm').hidden = false; };
   $('resetno').onclick = () => { $('resetconfirm').hidden = true; };
-  $('resetyes').onclick = () => { S = { game: S.game, court: S.court, first: null, turnTeam: null, start: null, dbl: false, last6: false, events: [], finished: false };
-    $('resetconfirm').hidden = true; persist(); render(); };
-  $('game').onchange = (e) => { S.game = +e.target.value; S.first = null; S.turnTeam = null; persist(); render(); };
-  $('court').onchange = (e) => { S.court = e.target.value; S.first = null; S.turnTeam = null; persist(); render(); };
-  $('first').onchange = (e) => { S.first = +e.target.value; if (!S.start && S.events.length === 0) S.turnTeam = S.first; persist(); render(); };
+  $('resetyes').onclick = async () => {
+    $('resetconfirm').hidden = true;
+    const n = await call('reset_court', { p_game: S.game, p_court: S.court });
+    if (n === null) return;
+    S = { game: S.game, court: S.court, first: null, turnTeam: null, start: null, dbl: false, last6: false, finished: false };
+    persist(); render(); toast(`第${S.game}試合・コート${S.court}の記録を${n}件消しました`);
+  };
+  const changeMatch = () => { S.first = null; S.turnTeam = null; S.start = null; S.finished = false; S.last6 = false; persist(); EV = ALLEV.filter((e) => e.game === S.game && e.court === S.court); render(); };
+  $('game').onchange = (e) => { S.game = +e.target.value; changeMatch(); };
+  $('court').onchange = (e) => { S.court = e.target.value; changeMatch(); };
+  $('first').onchange = (e) => { S.first = +e.target.value; if (!S.start && EV.length === 0) S.turnTeam = S.first; persist(); render(); };
 
-  // ===== aggregate =====
-  const F = ['p1', 'c1', 'r1', 'p2', 'c2', 'r2'];
-  function aggInputs() {
-    $('aggbody').innerHTML = [1, 2, 3, 4, 5, 6, 7, 8].map((t) => `<tr><td>チーム${t}</td>` +
-      F.map((f) => `<td><input type="number" min="0" inputmode="numeric" id="a${t}${f}" value="${(A[t] && A[t][f]) ?? ''}" aria-label="チーム${t} ${f}"></td>`).join('') + '</tr>').join('');
-    $('aggbody').querySelectorAll('input').forEach((inp) => inp.addEventListener('input', () => {
-      const t = inp.id.slice(1, 2), f = inp.id.slice(2); A[t] = A[t] || {}; A[t][f] = inp.value === '' ? '' : +inp.value; save('agg', A); rank(); }));
-  }
+  // ===== 集計 =====
   function rank() {
-    const n = (t, f) => +((A[t] && A[t][f]) || 0);
-    const rows = [1, 2, 3, 4, 5, 6, 7, 8].map((t) => ({ t, pts: n(t, 'p1') + n(t, 'p2'), cl: n(t, 'c1') + n(t, 'c2'), pr: n(t, 'r1') + n(t, 'r2') }));
-    rows.sort((a, b) => b.pts - a.pts || b.cl - a.cl || b.pr - a.pr || a.t - b.t);
+    const rows = RESULTS.slice().sort((a, b) => b.total - a.total || b.clears - a.clears || b.pairs - a.pairs || a.team - b.team);
     let place = 0;
     $('rankbody').innerHTML = rows.map((r, i) => {
-      const prev = rows[i - 1], next = rows[i + 1];
-      const same = (x) => x && x.pts === r.pts && x.cl === r.cl && x.pr === r.pr;
-      if (!same(prev)) place = i + 1;
-      const tie = (same(prev) || same(next)) && (r.pts || r.cl || r.pr);
-      return `<tr><td class="r">${place}</td><td>チーム${r.t}${tie ? ' <span class="tie">じゃんけん</span>' : ''}</td><td>${r.pts}</td><td>${r.cl}</td><td>${r.pr}</td></tr>`;
+      const same = (x) => x && x.total === r.total && x.clears === r.clears && x.pairs === r.pairs;
+      if (!same(rows[i - 1])) place = i + 1;
+      const tie = (same(rows[i - 1]) || same(rows[i + 1])) && (r.total || r.clears || r.pairs);
+      return `<tr><td class="r">${place}</td><td>チーム${r.team}${tie ? ' <span class="tie">じゃんけん</span>' : ''}</td><td>${r.pts1}</td><td>${r.pts2}</td><td class="pts">${r.total}</td><td>${r.clears}</td><td>${r.pairs}</td></tr>`;
     }).join('');
+    const out = [];
+    [1, 2].forEach((g) => ['A', 'B', 'C', 'D'].forEach((c) => MATCH[g][c].forEach((t) => {
+      const ev = ALLEV.filter((e) => e.game === g && e.court === c && e.team === t);
+      out.push(`<tr><td>第${g}試合・${c}</td><td>チーム${t}</td><td>${ev.reduce((s, e) => s + e.points, 0)}</td><td>${ev.filter((e) => e.kind === 'clear').length}</td><td>${ev.filter((e) => e.kind === 'pair').length}</td></tr>`);
+    })));
+    $('courtbody').innerHTML = out.join('');
   }
-
 
   function show(which) {
     $('view-gm').hidden = which !== 'gm'; $('view-agg').hidden = which !== 'agg';
@@ -304,7 +353,9 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
   $('tab-gm').onclick = () => show('gm');
   $('tab-agg').onclick = () => show('agg');
 
-  aggInputs(); rank(); render();
+  db.channel('events').on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => refresh()).subscribe();
+  setInterval(refresh, 10000);   // リアルタイムが切れても10秒ごとに取り直す
+  render(); refresh();
   show(location.hash === '#shukei' ? 'agg' : location.hash === '#gm' ? 'gm' : (load('tab', 'gm') === 'agg' ? 'agg' : 'gm'));
 })();
 </script>
