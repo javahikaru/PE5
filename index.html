@@ -152,13 +152,13 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     </div>
 
     <div class="card" style="display:flex;flex-direction:column;gap:8px">
-      <div class="note">全体のタイマーで21分の笛が鳴ったら「試合終了」を押してください。進行中のターンは打ち切りで、挑戦中のお題は0点です。結果を集計係に見せたら「リセット」で次の試合の準備をします。</div>
+      <div class="note">21分の笛が鳴ったら「試合終了」を押します。進行中のターンは打ち切りで、挑戦中のお題は0点です（押していない点は入りません）。得点は自動で集計されるので、第2試合の前に上の「試合」を「第2試合」に、「コート」を新しいコートに切りかえてください。<br>「テストの記録を消す」は、本番前の練習で入れた点を消すためのボタンです。このコート・この試合の記録がデータベースから全部消えるので、本番中は押さないでください。</div>
       <div class="sub">
         <button id="finishbtn">試合終了</button>
-        <button id="resetbtn">リセット</button>
+        <button id="resetbtn">テストの記録を消す</button>
       </div>
       <div class="confirm" id="resetconfirm" hidden>
-        <span class="note" style="flex:1">このコートの記録をすべて消します。</span>
+        <span class="note" style="flex:1">この試合・このコートの記録をデータベースから全部消します。</span>
         <button class="big" id="resetyes" style="min-height:40px;padding:8px 14px;background:var(--warn);color:#fff">消す</button>
         <button class="big" id="resetno" style="min-height:40px;padding:8px 14px;background:var(--line);color:var(--ink)">やめる</button>
       </div>
