@@ -235,6 +235,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
   <!-- ===== 答え ===== -->
   <section id="view-ans" class="wrap" hidden style="gap:12px;width:100%">
     <div class="card" style="display:flex;flex-direction:column;gap:10px">
+      <div class="note" id="ansinfo"></div>
       <div class="chips" id="anscat"></div>
       <div class="sets" id="anssets"></div>
     </div>
@@ -422,7 +423,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     S = { game: S.game, court: S.court, first: null, turnTeam: null, start: null, dbl: false, last6: false, finished: false };
     persist(); render(); toast(`第${S.game}試合・コート${S.court}の記録を${n}件消しました`);
   };
-  const changeMatch = () => { S.first = null; S.turnTeam = null; S.start = null; S.finished = false; S.last6 = false; persist(); EV = ALLEV.filter((e) => e.game === S.game && e.court === S.court); render(); };
+  const changeMatch = () => { if (typeof toolReset === 'function') toolReset(); if (typeof ansRender === 'function' && !$('view-ans').hidden) ansRender(); S.first = null; S.turnTeam = null; S.start = null; S.finished = false; S.last6 = false; persist(); EV = ALLEV.filter((e) => e.game === S.game && e.court === S.court); render(); };
   $('game').onchange = (e) => { S.game = +e.target.value; changeMatch(); };
   $('court').onchange = (e) => { S.court = e.target.value; changeMatch(); };
   $('first').onchange = (e) => { S.first = +e.target.value; if (!S.start && EV.length === 0) S.turnTeam = S.first; persist(); render(); };
@@ -447,7 +448,8 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
 
   // ===== answers =====
   let ANS = null;
-  const CATS = ['漢字', '国旗', '元素', 'クイズ', '早口言葉', '答え合わせ'];
+  const COURT_BK = { A: ['クイズ', '国旗', '漢字'], B: ['元素', '早口言葉', '答え合わせ'], C: ['クイズ', '元素', '答え合わせ'], D: ['国旗', '漢字', '早口言葉'] };
+  const catsHere = () => COURT_BK[S.court];
   let cat = load('anscat', '漢字'), set = load('ansset', 1);
   const esc = (t) => String(t).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   async function loadAnswers() {
@@ -457,8 +459,10 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     ANS = data; ansRender();
   }
   function ansRender() {
+    $('ansinfo').textContent = `コート${S.court}のお題だけ表示しています（コートは「GM用」タブで切りかえ）`;
     if (!ANS) { $('anscat').innerHTML = ''; $('anssets').innerHTML = ''; $('ansbody').innerHTML = '<div class="note">読み込み中…</div>'; loadAnswers(); return; }
-    $('anscat').innerHTML = CATS.map((c) => `<button aria-pressed="${c === cat}" data-c="${c}">${c}</button>`).join('');
+    if (!catsHere().includes(cat)) cat = catsHere()[0];
+    $('anscat').innerHTML = catsHere().map((c) => `<button aria-pressed="${c === cat}" data-c="${c}">${c}</button>`).join('');
     $('anscat').querySelectorAll('button').forEach((b) => b.onclick = () => { cat = b.dataset.c; save('anscat', cat); ansRender(); });
     const hasSets = ['漢字', '国旗', '元素', 'クイズ'].includes(cat);
     $('anssets').hidden = !hasSets;
@@ -501,9 +505,23 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     'プランク':      { type: 'hold', sec: 30, note: '全員の姿勢がそろったら合図。30秒保てばクリア。誰かが膝・お腹をついたらやり直し' },
     'フラフープ':    { type: 'hold', sec: 7, note: '回り始めたら合図。7秒落とさなければクリア' },
   };
+  // コートごとのお題（運営計画のお題一覧のとおり。変えるときはここを書きかえる）
+  const COURT_PE = {
+    A: ['フリースロー', '握力', '二重跳び', '長座体前屈', '腕立て伏せ', 'プランク', 'スクワット'],
+    B: ['フリースロー', '握力', '二重跳び', '長座体前屈', 'フラフープ', '馬跳び', 'バーピージャンプ'],
+    C: ['バドミントンラリー', 'フリスビーラリー', 'リフティング', 'サッカーパス', '腕立て伏せ', 'プランク', '馬跳び'],
+    D: ['バドミントンラリー', 'フリスビーラリー', 'リフティング', 'サッカーパス', 'スクワット', 'フラフープ', 'バーピージャンプ'],
+  };
   let M = load('tool', { task: '握力', size: 4 });
+  let toolCourt = '';
+  function fillTasks() {
+    if (toolCourt === S.court) return;
+    toolCourt = S.court;
+    const list = COURT_PE[S.court];
+    $('mtask').innerHTML = list.map((k) => `<option>${k}</option>`).join('');
+    if (!list.includes(M.task)) { M.task = list[0]; save('tool', M); }
+  }
   let V = [], made = 0, thrown = 0, tStart = null, tBeeped = false;
-  $('mtask').innerHTML = Object.keys(T).map((k) => `<option>${k}</option>`).join('');
   const r1 = (x) => Math.round(x * 10) / 10;
   function judge() {
     const t = T[M.task];
@@ -514,6 +532,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     return { done: el >= t.sec, ok: el >= t.sec, tot: r1(Math.min(el, t.sec)), tgt: t.sec, cnt: '' };
   }
   function toolRender() {
+    fillTasks();
     const t = T[M.task];
     $('mtask').value = M.task;
     $('msize').hidden = t.type !== 'sum';
