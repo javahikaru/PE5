@@ -203,6 +203,15 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
         <tbody id="courtbody"></tbody>
       </table>
     </div>
+    <div class="card" style="display:flex;flex-direction:column;gap:8px">
+      <div class="note">本番前に、練習で入れた点を全コート・両試合まとめて消します。本番が始まったら押さないでください。</div>
+      <div class="sub"><button id="wipebtn">テストデータをすべて消す</button></div>
+      <div class="confirm" id="wipeconfirm" hidden>
+        <span class="note" style="flex:1">全チームの得点がすべて0に戻ります。元に戻せません。</span>
+        <button class="big" id="wipeyes" style="min-height:40px;padding:8px 14px;background:var(--warn);color:#fff">すべて消す</button>
+        <button class="big" id="wipeno" style="min-height:40px;padding:8px 14px;background:var(--line);color:var(--ink)">やめる</button>
+      </div>
+    </div>
   </section>
 </div>
 
@@ -413,6 +422,14 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     }
   }
 
+  $('wipebtn').onclick = () => { $('wipeconfirm').hidden = false; };
+  $('wipeno').onclick = () => { $('wipeconfirm').hidden = true; };
+  $('wipeyes').onclick = async () => {
+    $('wipeconfirm').hidden = true;
+    const n = await call('reset_all', {});
+    if (n === null) return;
+    toast(`テストデータを${n}件消しました`);
+  };
   function show(which) {
     $('view-gm').hidden = which !== 'gm'; $('view-agg').hidden = which !== 'agg'; $('view-ans').hidden = which !== 'ans'; if (which === 'ans') ansRender();
     $('tab-gm').setAttribute('aria-selected', which === 'gm'); $('tab-agg').setAttribute('aria-selected', which === 'agg'); $('tab-ans').setAttribute('aria-selected', which === 'ans');
