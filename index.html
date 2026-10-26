@@ -92,6 +92,14 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(16px + env(safe-area-inset-bottom, 0px)); background: var(--warn); color: #fff; padding: 10px 16px; border-radius: 10px; font-weight: 700; max-width: calc(100% - 32px); z-index: 20; }
 .pin { display: flex; gap: 8px; align-items: end; }
 .pin input { font: inherit; font-size: 16px; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; }
+
+.gate { position: fixed; inset: 0; z-index: 30; background: var(--bg); display: flex; align-items: center; justify-content: center;
+  padding: max(16px, env(safe-area-inset-top, 0px)) max(16px, env(safe-area-inset-right, 0px)) max(16px, env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+.gate form { width: 100%; max-width: 320px; display: flex; flex-direction: column; gap: 12px; }
+.gate h2 { margin: 0; font-size: 20px; font-weight: 900; }
+.gate input { font: inherit; font-size: 24px; letter-spacing: .3em; text-align: center; padding: 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); }
+.gate button { border: 0; border-radius: 10px; padding: 14px; font: inherit; font-size: 18px; font-weight: 900; background: var(--court); color: var(--court-ink); cursor: pointer; }
+.gate .err { color: var(--warn); font-weight: 700; min-height: 1.4em; }
 </style>
 </head>
 <body>
@@ -113,10 +121,6 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
       <label class="sel">試合<select id="game"><option value="1">第1試合</option><option value="2">第2試合</option></select></label>
       <label class="sel">コート<select id="court"><option>A</option><option>B</option><option>C</option><option>D</option></select></label>
       <label class="sel">先攻（じゃんけんの勝ち）<select id="first"></select></label>
-    </div>
-    <div class="card pin" id="pinrow">
-      <label class="sel">GM用PIN<input id="pin" type="password" inputmode="numeric" autocomplete="off"></label>
-      <button class="big" id="pinbtn" style="min-height:44px;padding:8px 16px;background:var(--court);color:var(--court-ink)">確認</button>
     </div>
 
     <div class="card" style="display:flex;flex-direction:column;gap:10px">
@@ -179,6 +183,15 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
   </section>
 </div>
 
+<div class="gate" id="gate">
+  <form id="gateform" autocomplete="off">
+    <h2>スポーツ神経衰弱 スコアボード</h2>
+    <div class="note">運営用のパスワードを入れてください。</div>
+    <input id="gatepw" type="password" inputmode="numeric" aria-label="パスワード">
+    <button type="submit">開く</button>
+    <div class="err" id="gateerr"></div>
+  </form>
+</div>
 <div class="toast" id="toast" hidden></div>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.79.0/dist/umd/supabase.js"></script>
 <script>
@@ -235,7 +248,6 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
 
   function render() {
     $('game').value = S.game; $('court').value = S.court; fillFirst();
-    $('pinrow').hidden = !!PIN;
     const running = !!S.start && !S.finished;
     $('turnteam').innerHTML = S.finished ? '<small>試合終了</small>おつかれさまでした' : `<small>いまのターン</small>チーム${S.turnTeam}`;
     $('dblbadge').hidden = !(running && S.dbl);
@@ -248,8 +260,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     $('timer').classList.toggle('over', running && el >= TURN);
     $('givebtn').disabled = !(running && el >= GIVE_AFTER);
     const st = $('status'); st.classList.remove('alert');
-    if (!PIN) st.textContent = '最初にGM用PINを入れてください';
-    else if (S.finished) st.textContent = '試合終了。得点は自動で集計されています';
+    if (S.finished) st.textContent = '試合終了。得点は自動で集計されています';
     else if (running && el >= TURN) { st.textContent = '時間切れ。挑戦中のお題は0点です。「ターン終了」を押してください'; st.classList.add('alert'); }
     else if (running) st.textContent = el >= GIVE_AFTER ? 'ギブアップできます' : 'ペアがそろったら「ペア成立」、お題をクリアしたら「お題クリア」';
     else st.textContent = S.last6 ? '残り6分を過ぎたので、次のターンからお題の点が2倍です' : '「スタート」でこのチームの持ち時間3分が始まります';
@@ -282,7 +293,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
   async function call(fn, args) {
     const { data, error } = await db.rpc(fn, { p_pin: PIN, ...args });
     if (error) {
-      if (/PIN/.test(error.message)) { PIN = ''; save('pin', ''); render(); toast('PINが違います。入れ直してください'); }
+      if (/PIN/.test(error.message)) { PIN = ''; save('pin', ''); gate(); render(); }
       else toast('送れませんでした。電波を確認して、もう一度押してください');
       return null;
     }
@@ -296,13 +307,16 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     busy = false;
   }
 
-  $('pinbtn').onclick = async () => {
-    const p = $('pin').value.trim(); if (!p) return;
+  function gate() { $('gate').hidden = !!PIN; if (!PIN) setTimeout(() => $('gatepw').focus(), 50); }
+  $('gateform').addEventListener('submit', async (ev) => {
+    ev.preventDefault();
+    const p = $('gatepw').value.trim(); if (!p) return;
+    $('gateerr').textContent = '確認しています…';
     const { data, error } = await db.rpc('check_pin', { p_pin: p });
-    if (error) { toast('確認できませんでした。電波を確認してください'); return; }
-    if (!data) { toast('PINが違います'); return; }
-    PIN = p; save('pin', p); $('pin').value = ''; render();
-  };
+    if (error) { $('gateerr').textContent = '確認できませんでした。電波を確認してください'; return; }
+    if (!data) { $('gateerr').textContent = 'パスワードが違います'; return; }
+    PIN = p; save('pin', p); $('gatepw').value = ''; $('gateerr').textContent = ''; gate(); render(); refresh();
+  });
   $('startbtn').onclick = () => { S.start = Date.now(); S.dbl = S.last6; beeped = false; keepAwake();
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} persist(); render(); };
   $('pairbtn').onclick = () => addEvent('pair');
@@ -355,7 +369,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
 
   db.channel('events').on('postgres_changes', { event: '*', schema: 'public', table: 'events' }, () => refresh()).subscribe();
   setInterval(refresh, 10000);   // リアルタイムが切れても10秒ごとに取り直す
-  render(); refresh();
+  gate(); render(); refresh();
   show(location.hash === '#shukei' ? 'agg' : location.hash === '#gm' ? 'gm' : (load('tab', 'gm') === 'agg' ? 'agg' : 'gm'));
 })();
 </script>
