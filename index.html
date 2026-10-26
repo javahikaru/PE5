@@ -112,6 +112,23 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
 .ans .q { font-size: 13px; color: var(--muted); }
 .ans .a { grid-column: 2; font-size: 26px; font-weight: 900; line-height: 1.25; }
 .ans .n { grid-column: 2; font-size: 12px; color: var(--muted); line-height: 1.5; }
+
+.meas { display: flex; flex-direction: column; gap: 10px; }
+.meas .seg { display: flex; gap: 6px; flex-wrap: wrap; }
+.meas .seg button { flex: 1; min-width: 80px; border: 1px solid var(--line); background: var(--panel); color: var(--ink); font: inherit; font-weight: 700; padding: 10px 6px; border-radius: 10px; cursor: pointer; }
+.meas .seg button[aria-pressed="true"] { background: var(--ink); color: var(--bg); border-color: var(--ink); }
+.mrow { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; align-items: end; }
+.mrow label { display: flex; flex-direction: column; gap: 2px; font-size: 12px; color: var(--muted); }
+.mrow input, .mrow select { font: inherit; font-size: 20px; padding: 8px; border-radius: 8px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); width: 100%; font-variant-numeric: tabular-nums; }
+.msum { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; text-align: center; }
+.msum div { border: 1px solid var(--line); border-radius: 10px; padding: 8px 4px; }
+.msum b { display: block; font-family: var(--font-num); font-size: 30px; line-height: 1.1; font-variant-numeric: tabular-nums; }
+.msum span { font-size: 12px; color: var(--muted); }
+.msum .ok { border-color: var(--court); color: var(--court); }
+.msum .ng { border-color: var(--warn); color: var(--warn); }
+.mlist { font-size: 14px; display: flex; flex-direction: column; gap: 4px; }
+.mlist div { display: flex; justify-content: space-between; gap: 8px; border-bottom: 1px solid var(--line); padding: 4px 0; }
+.mlist button { border: 0; background: transparent; color: var(--warn); font: inherit; font-weight: 700; cursor: pointer; }
 </style>
 </head>
 <body>
@@ -153,6 +170,34 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
       <div class="sub">
         <button id="undobtn">直前の操作を取り消す</button>
         <button id="last6btn">残り6分の合図を出した</button>
+      </div>
+    </div>
+
+    <div class="card meas" id="meas">
+      <div style="font-weight:900">個人の測定（全員で測るお題）</div>
+      <div class="seg" id="mkind">
+        <button data-k="grip" aria-pressed="true">握力</button>
+        <button data-k="sitreach" aria-pressed="false">長座体前屈</button>
+      </div>
+      <div class="seg" id="msize">
+        <button data-n="3" aria-pressed="false">3人チーム</button>
+        <button data-n="4" aria-pressed="true">4人チーム</button>
+      </div>
+      <div class="mrow">
+        <label>出席番号<select id="mstudent"></select></label>
+        <label><span id="munit">記録（kg）</span><input id="mvalue" type="number" inputmode="decimal" step="0.1" min="0"></label>
+      </div>
+      <button class="big" id="maddbtn" style="background:var(--away);color:#fff;min-height:52px">この人の記録を入れる</button>
+      <div class="msum">
+        <div><b id="mcount">0</b><span>測った人数</span></div>
+        <div><b id="mtotal">0</b><span>チーム合計</span></div>
+        <div id="mjudge"><b id="mtarget">120</b><span>目標</span></div>
+      </div>
+      <div class="status" id="mstatus"></div>
+      <div class="mlist" id="mlist"></div>
+      <div class="sub">
+        <button id="mclearbtn">クリアにする（得点を入れる）</button>
+        <button id="mretrybtn">測り直す（合計を0から）</button>
       </div>
     </div>
 
@@ -353,7 +398,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} persist(); render(); };
   $('pairbtn').onclick = () => addEvent('pair');
   $('clearbtn').onclick = () => addEvent('clear');
-  function endTurn() { S.start = null; S.turnTeam = other(S.turnTeam); persist(); render(); }
+  function endTurn() { S.start = null; S.turnTeam = other(S.turnTeam); persist(); render(); if (typeof measRender === 'function') measRender(); }
   $('endbtn').onclick = endTurn;
   $('givebtn').onclick = endTurn;
   $('undobtn').onclick = () => call('undo_last', { p_game: S.game, p_court: S.court });
@@ -430,6 +475,57 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     if (n === null) return;
     toast(`テストデータを${n}件消しました`);
   };
+  // ===== 個人の測定 =====
+  const MK = { grip: { name: '握力', unit: 'kg', per: 30 }, sitreach: { name: '長座体前屈', unit: 'cm', per: 40 } };
+  let M = load('meas', { kind: 'grip', size: 4, since: 0 });
+  let MEAS = [];
+  $('mstudent').innerHTML = Array.from({ length: 45 }, (_, i) => `<option value="${i + 1}">${i + 1}番</option>`).join('');
+  function curMeas() {
+    return MEAS.filter((m) => m.game === S.game && m.court === S.court && m.team === S.turnTeam && m.kind === M.kind && m.id > (M.since || 0));
+  }
+  function measRender() {
+    $('mkind').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.k === M.kind));
+    $('msize').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', +b.dataset.n === M.size));
+    const k = MK[M.kind], list = curMeas();
+    $('munit').textContent = `記録（${k.unit}）`;
+    const total = Math.round(list.reduce((a, m) => a + Number(m.value), 0) * 10) / 10, target = k.per * M.size;
+    $('mcount').textContent = list.length + '/' + M.size;
+    $('mtotal').textContent = total;
+    $('mtarget').textContent = target;
+    const done = list.length >= M.size, ok = total >= target;
+    $('mjudge').className = done ? (ok ? 'ok' : 'ng') : '';
+    $('mstatus').textContent = !done ? `チーム${S.turnTeam}の${k.name}：あと${M.size - list.length}人` : ok ? `目標達成！「クリアにする」を押してください` : `目標まであと${Math.round((target - total) * 10) / 10}${k.unit}。測り直す場合は「測り直す」`;
+    $('mstatus').className = 'status' + (done && !ok ? ' alert' : '');
+    $('mclearbtn').disabled = !(done && ok);
+    $('mlist').innerHTML = list.slice().reverse().map((m) => `<div><span>${m.student}番　${Number(m.value)}${k.unit}</span><button data-id="${m.id}">消す</button></div>`).join('');
+    $('mlist').querySelectorAll('button').forEach((b) => b.onclick = async () => { await callM('delete_measure', { p_id: +b.dataset.id }); });
+  }
+  async function refreshMeas() {
+    const { data, error } = await db.from('measurements').select('*').order('id');
+    if (!error) { MEAS = data; measRender(); }
+  }
+  async function callM(fn, args) {
+    const { error } = await db.rpc(fn, { p_pin: PIN, ...args });
+    if (error) { toast(/PIN/.test(error.message) ? 'PINが違います' : '送れませんでした。電波を確認して、もう一度押してください'); return false; }
+    await refreshMeas(); return true;
+  }
+  $('mkind').querySelectorAll('button').forEach((b) => b.onclick = () => { M.kind = b.dataset.k; save('meas', M); measRender(); });
+  $('msize').querySelectorAll('button').forEach((b) => b.onclick = () => { M.size = +b.dataset.n; save('meas', M); measRender(); });
+  $('maddbtn').onclick = async () => {
+    const v = parseFloat($('mvalue').value);
+    if (!(v >= 0 && v < 1000)) { toast('記録の数字を入れてください'); return; }
+    const ok = await callM('add_measure', { p_game: S.game, p_court: S.court, p_team: S.turnTeam, p_kind: M.kind, p_student: +$('mstudent').value, p_value: v });
+    if (ok) { $('mvalue').value = ''; const sel = $('mstudent'); if (sel.selectedIndex < sel.options.length - 1) sel.selectedIndex++; }
+  };
+  $('mretrybtn').onclick = () => { M.since = MEAS.length ? MEAS[MEAS.length - 1].id : 0; save('meas', M); measRender(); };
+  $('mclearbtn').onclick = async () => {
+    await addEvent('clear');
+    M.since = MEAS.length ? MEAS[MEAS.length - 1].id : 0; save('meas', M); measRender();
+  };
+  db.channel('meas').on('postgres_changes', { event: '*', schema: 'public', table: 'measurements' }, () => refreshMeas()).subscribe();
+  setInterval(refreshMeas, 10000);
+  measRender(); refreshMeas();
+
   function show(which) {
     $('view-gm').hidden = which !== 'gm'; $('view-agg').hidden = which !== 'agg'; $('view-ans').hidden = which !== 'ans'; if (which === 'ans') ansRender();
     $('tab-gm').setAttribute('aria-selected', which === 'gm'); $('tab-agg').setAttribute('aria-selected', which === 'agg'); $('tab-ans').setAttribute('aria-selected', which === 'ans');
