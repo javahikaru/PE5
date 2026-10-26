@@ -174,30 +174,39 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     </div>
 
     <div class="card meas" id="meas">
-      <div style="font-weight:900">個人の測定（全員で測るお題）</div>
-      <div class="seg" id="mkind">
-        <button data-k="grip" aria-pressed="true">握力</button>
-        <button data-k="sitreach" aria-pressed="false">長座体前屈</button>
-      </div>
+      <div style="font-weight:900">お題の判定ツール</div>
+      <label class="sel">お題<select id="mtask"></select></label>
       <div class="seg" id="msize">
         <button data-n="3" aria-pressed="false">3人チーム</button>
         <button data-n="4" aria-pressed="true">4人チーム</button>
       </div>
-      <div class="mrow">
-        <label>出席番号<select id="mstudent"></select></label>
-        <label><span id="munit">記録（kg）</span><input id="mvalue" type="number" inputmode="decimal" step="0.1" min="0"></label>
+      <div class="note" id="mnote"></div>
+      <div id="mtimerbox" class="msum" style="grid-template-columns:1fr auto">
+        <div><b id="mtime">0.0</b><span id="mtimelabel">秒</span></div>
+        <button class="big" id="mtimerbtn" style="min-height:56px;padding:8px 18px;background:var(--ink);color:var(--bg)">合図スタート</button>
       </div>
-      <button class="big" id="maddbtn" style="background:var(--away);color:#fff;min-height:52px">この人の記録を入れる</button>
+      <div id="msumbox" class="mrow">
+        <label><span id="munit">記録</span><input id="mvalue" type="number" inputmode="decimal" step="0.1" min="0"></label>
+        <button class="big" id="maddbtn" style="background:var(--away);color:#fff;min-height:50px">1人分を足す</button>
+      </div>
+      <div id="mcountbox" class="seg">
+        <button id="mplus" style="flex:2;min-height:64px;font-size:22px;background:var(--away);color:#fff;border:0">＋1</button>
+        <button id="mminus" style="flex:1;min-height:64px">−1</button>
+      </div>
+      <div id="mthrowbox" class="seg">
+        <button id="min" style="flex:1;min-height:64px;font-size:20px;background:var(--court);color:var(--court-ink);border:0">入った</button>
+        <button id="mout" style="flex:1;min-height:64px;font-size:20px">外れた</button>
+      </div>
       <div class="msum">
-        <div><b id="mcount">0</b><span>測った人数</span></div>
-        <div><b id="mtotal">0</b><span>チーム合計</span></div>
-        <div id="mjudge"><b id="mtarget">120</b><span>目標</span></div>
+        <div><b id="mcount">0</b><span id="mcountlabel">人数</span></div>
+        <div><b id="mtotal">0</b><span id="mtotallabel">合計</span></div>
+        <div id="mjudge"><b id="mtarget">0</b><span>目標</span></div>
       </div>
       <div class="status" id="mstatus"></div>
       <div class="mlist" id="mlist"></div>
       <div class="sub">
         <button id="mclearbtn">クリアにする（得点を入れる）</button>
-        <button id="mretrybtn">測り直す（合計を0から）</button>
+        <button id="mretrybtn">やり直し（0から）</button>
       </div>
     </div>
 
@@ -398,7 +407,7 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} persist(); render(); };
   $('pairbtn').onclick = () => addEvent('pair');
   $('clearbtn').onclick = () => addEvent('clear');
-  function endTurn() { S.start = null; S.turnTeam = other(S.turnTeam); persist(); render(); if (typeof measRender === 'function') measRender(); }
+  function endTurn() { S.start = null; S.turnTeam = other(S.turnTeam); persist(); render(); if (typeof toolReset === 'function') toolReset(); }
   $('endbtn').onclick = endTurn;
   $('givebtn').onclick = endTurn;
   $('undobtn').onclick = () => call('undo_last', { p_game: S.game, p_court: S.court });
@@ -475,56 +484,92 @@ tr.now td:first-child { color: var(--court); font-weight: 900; }
     if (n === null) return;
     toast(`テストデータを${n}件消しました`);
   };
-  // ===== 個人の測定 =====
-  const MK = { grip: { name: '握力', unit: 'kg', per: 30 }, sitreach: { name: '長座体前屈', unit: 'cm', per: 40 } };
-  let M = load('meas', { kind: 'grip', size: 4, since: 0 });
-  let MEAS = [];
-  $('mstudent').innerHTML = Array.from({ length: 45 }, (_, i) => `<option value="${i + 1}">${i + 1}番</option>`).join('');
-  function curMeas() {
-    return MEAS.filter((m) => m.game === S.game && m.court === S.court && m.team === S.turnTeam && m.kind === M.kind && m.id > (M.since || 0));
+  // ===== お題の判定ツール（記録は保存しない。判定のためだけ） =====
+  const T = {
+    '握力':          { type: 'sum', unit: 'kg', target: (n) => 30 * n, note: '全員が1回ずつ測り、合計が「30kg×人数」以上でクリア' },
+    '長座体前屈':    { type: 'sum', unit: 'cm', target: (n) => 40 * n, note: '全員が1回ずつ測り、合計が「40cm×人数」以上でクリア' },
+    '腕立て伏せ':    { type: 'sum', unit: '回', target: (n) => (n === 3 ? 19 : 25), limit: 10, note: '合図から10秒、全員同時。一人ずつの回数を足す（4人25回・3人19回）' },
+    'バーピージャンプ': { type: 'sum', unit: '回', target: () => 10, limit: 20, note: '合図から20秒、全員同時。一人ずつの回数を足して10回以上' },
+    '馬跳び':        { type: 'count', target: 10, limit: 20, note: '合図から20秒以内に10回跳び越えればクリア' },
+    '二重跳び':      { type: 'count', target: 10, note: '1人が連続10回。引っかかったら「やり直し」で0から' },
+    'スクワット':    { type: 'count', target: 10, note: '全員の動きがそろった回だけ数えて10回' },
+    'リフティング':  { type: 'count', target: 10, note: 'チームでつないで10回。手・腕に当たる、落ちたら0から' },
+    'バドミントンラリー': { type: 'count', target: 4, unit: '往復', note: '落とさずに4往復。落ちたら0から' },
+    'フリスビーラリー':   { type: 'count', target: 4, unit: '往復', note: '落とさずに4往復。落としたら0から' },
+    'サッカーパス':  { type: 'count', target: 3, unit: '往復', note: '3往復。止められなかったら0から' },
+    'フリースロー':  { type: 'throw', target: 2, of: 4, note: '2人が2投ずつ計4投で2本。届かなければ4投をやり直し' },
+    'プランク':      { type: 'hold', sec: 30, note: '全員の姿勢がそろったら合図。30秒保てばクリア。誰かが膝・お腹をついたらやり直し' },
+    'フラフープ':    { type: 'hold', sec: 7, note: '回り始めたら合図。7秒落とさなければクリア' },
+  };
+  let M = load('tool', { task: '握力', size: 4 });
+  let V = [], made = 0, thrown = 0, tStart = null, tBeeped = false;
+  $('mtask').innerHTML = Object.keys(T).map((k) => `<option>${k}</option>`).join('');
+  const r1 = (x) => Math.round(x * 10) / 10;
+  function judge() {
+    const t = T[M.task];
+    if (t.type === 'sum') { const tgt = t.target(M.size), tot = r1(V.reduce((a, b) => a + b, 0)); return { done: V.length >= M.size, ok: tot >= tgt, tot, tgt, cnt: V.length + '/' + M.size }; }
+    if (t.type === 'count') return { done: V.length >= t.target, ok: V.length >= t.target, tot: V.length, tgt: t.target, cnt: '' };
+    if (t.type === 'throw') return { done: thrown >= t.of || made >= t.target, ok: made >= t.target, tot: made, tgt: t.target, cnt: thrown + '/' + t.of };
+    const el = tStart ? (Date.now() - tStart) / 1000 : 0;
+    return { done: el >= t.sec, ok: el >= t.sec, tot: r1(Math.min(el, t.sec)), tgt: t.sec, cnt: '' };
   }
-  function measRender() {
-    $('mkind').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', b.dataset.k === M.kind));
+  function toolRender() {
+    const t = T[M.task];
+    $('mtask').value = M.task;
+    $('msize').hidden = t.type !== 'sum';
     $('msize').querySelectorAll('button').forEach((b) => b.setAttribute('aria-pressed', +b.dataset.n === M.size));
-    const k = MK[M.kind], list = curMeas();
-    $('munit').textContent = `記録（${k.unit}）`;
-    const total = Math.round(list.reduce((a, m) => a + Number(m.value), 0) * 10) / 10, target = k.per * M.size;
-    $('mcount').textContent = list.length + '/' + M.size;
-    $('mtotal').textContent = total;
-    $('mtarget').textContent = target;
-    const done = list.length >= M.size, ok = total >= target;
-    $('mjudge').className = done ? (ok ? 'ok' : 'ng') : '';
-    $('mstatus').textContent = !done ? `チーム${S.turnTeam}の${k.name}：あと${M.size - list.length}人` : ok ? `目標達成！「クリアにする」を押してください` : `目標まであと${Math.round((target - total) * 10) / 10}${k.unit}。測り直す場合は「測り直す」`;
-    $('mstatus').className = 'status' + (done && !ok ? ' alert' : '');
-    $('mclearbtn').disabled = !(done && ok);
-    $('mlist').innerHTML = list.slice().reverse().map((m) => `<div><span>${m.student}番　${Number(m.value)}${k.unit}</span><button data-id="${m.id}">消す</button></div>`).join('');
-    $('mlist').querySelectorAll('button').forEach((b) => b.onclick = async () => { await callM('delete_measure', { p_id: +b.dataset.id }); });
+    $('mnote').textContent = t.note;
+    $('msumbox').hidden = t.type !== 'sum';
+    $('mcountbox').hidden = t.type !== 'count';
+    $('mthrowbox').hidden = t.type !== 'throw';
+    $('mtimerbox').hidden = !(t.limit || t.type === 'hold');
+    $('munit').textContent = `1人の記録（${t.unit || '回'}）`;
+    $('mcountlabel').textContent = t.type === 'sum' ? '入れた人数' : t.type === 'throw' ? '投げた数' : '';
+    $('mcount').parentElement.hidden = !(t.type === 'sum' || t.type === 'throw');
+    $('mtotallabel').textContent = t.type === 'sum' ? `チーム合計（${t.unit}）` : t.type === 'throw' ? '入った本数' : t.type === 'hold' ? '保った秒数' : `回数（${t.unit || '回'}）`;
+    const j = judge();
+    $('mcount').textContent = j.cnt; $('mtotal').textContent = j.tot; $('mtarget').textContent = j.tgt;
+    $('mjudge').className = j.done ? (j.ok ? 'ok' : 'ng') : '';
+    let msg = '';
+    if (j.ok && j.done) msg = '目標達成！「クリアにする」を押してください';
+    else if (j.done) msg = t.type === 'throw' ? '4投で届きませんでした。「やり直し」で4投をはじめから' : `目標まであと${r1(j.tgt - j.tot)}。やり直す場合は「やり直し」`;
+    else if (t.limit && tStart && (Date.now() - tStart) / 1000 >= t.limit) msg = '時間切れ。ここまでの数で判定します';
+    $('mstatus').textContent = msg;
+    $('mstatus').className = 'status' + (j.done && !j.ok ? ' alert' : '');
+    $('mclearbtn').disabled = !(j.ok);
+    $('mlist').innerHTML = t.type === 'sum' ? V.map((v, i) => `<div><span>${i + 1}人目　${v}${t.unit}</span><button data-i="${i}">消す</button></div>`).join('') : '';
+    $('mlist').querySelectorAll('button').forEach((b) => b.onclick = () => { V.splice(+b.dataset.i, 1); toolRender(); });
+    // タイマー
+    if (!$('mtimerbox').hidden) {
+      const el = tStart ? (Date.now() - tStart) / 1000 : 0;
+      if (t.type === 'hold') { $('mtime').textContent = r1(el).toFixed(1); $('mtimelabel').textContent = `秒（目標${t.sec}秒）`; }
+      else { $('mtime').textContent = Math.max(0, t.limit - el).toFixed(1); $('mtimelabel').textContent = `残り秒（${t.limit}秒）`; }
+      $('mtimerbtn').textContent = tStart ? 'ストップ' : '合図スタート';
+    }
   }
-  async function refreshMeas() {
-    const { data, error } = await db.from('measurements').select('*').order('id');
-    if (!error) { MEAS = data; measRender(); }
-  }
-  async function callM(fn, args) {
-    const { error } = await db.rpc(fn, { p_pin: PIN, ...args });
-    if (error) { toast(/PIN/.test(error.message) ? 'PINが違います' : '送れませんでした。電波を確認して、もう一度押してください'); return false; }
-    await refreshMeas(); return true;
-  }
-  $('mkind').querySelectorAll('button').forEach((b) => b.onclick = () => { M.kind = b.dataset.k; save('meas', M); measRender(); });
-  $('msize').querySelectorAll('button').forEach((b) => b.onclick = () => { M.size = +b.dataset.n; save('meas', M); measRender(); });
-  $('maddbtn').onclick = async () => {
-    const v = parseFloat($('mvalue').value);
-    if (!(v >= 0 && v < 1000)) { toast('記録の数字を入れてください'); return; }
-    const ok = await callM('add_measure', { p_game: S.game, p_court: S.court, p_team: S.turnTeam, p_kind: M.kind, p_student: +$('mstudent').value, p_value: v });
-    if (ok) { $('mvalue').value = ''; const sel = $('mstudent'); if (sel.selectedIndex < sel.options.length - 1) sel.selectedIndex++; }
+  function toolReset() { V = []; made = 0; thrown = 0; tStart = null; tBeeped = false; toolRender(); }
+  setInterval(() => {
+    if (!tStart) return;
+    const t = T[M.task], el = (Date.now() - tStart) / 1000, end = t.type === 'hold' ? t.sec : t.limit;
+    if (el >= end && !tBeeped) { tBeeped = true; beep(); if (t.type === 'hold') tStart = Date.now() - t.sec * 1000; }
+    if (t.type === 'hold' && el >= t.sec) { toolRender(); tStart = null; $('mtime').textContent = t.sec.toFixed(1); return; }
+    toolRender();
+  }, 100);
+  $('mtask').onchange = (e) => { M.task = e.target.value; save('tool', M); toolReset(); };
+  $('msize').querySelectorAll('button').forEach((b) => b.onclick = () => { M.size = +b.dataset.n; save('tool', M); toolRender(); });
+  $('maddbtn').onclick = () => { const v = parseFloat($('mvalue').value); if (!(v >= 0 && v < 1000)) { toast('数字を入れてください'); return; } V.push(v); $('mvalue').value = ''; $('mvalue').focus(); toolRender(); };
+  $('mvalue').addEventListener('keydown', (e) => { if (e.key === 'Enter') $('maddbtn').click(); });
+  $('mplus').onclick = () => { const t = T[M.task]; if (t.limit && tStart && (Date.now() - tStart) / 1000 >= t.limit) return; V.push(1); toolRender(); };
+  $('mminus').onclick = () => { V.pop(); toolRender(); };
+  $('min').onclick = () => { const t = T[M.task]; if (thrown >= t.of) return; made++; thrown++; toolRender(); };
+  $('mout').onclick = () => { const t = T[M.task]; if (thrown >= t.of) return; thrown++; toolRender(); };
+  $('mtimerbtn').onclick = () => {
+    if (tStart) { const t = T[M.task]; if (t.type === 'hold') { tStart = null; } else { tStart = Date.now() - t.limit * 1000; } toolRender(); return; }
+    tStart = Date.now(); tBeeped = false; try { actx = actx || new (window.AudioContext || window.webkitAudioContext)(); actx.resume(); } catch (e) {} toolRender();
   };
-  $('mretrybtn').onclick = () => { M.since = MEAS.length ? MEAS[MEAS.length - 1].id : 0; save('meas', M); measRender(); };
-  $('mclearbtn').onclick = async () => {
-    await addEvent('clear');
-    M.since = MEAS.length ? MEAS[MEAS.length - 1].id : 0; save('meas', M); measRender();
-  };
-  db.channel('meas').on('postgres_changes', { event: '*', schema: 'public', table: 'measurements' }, () => refreshMeas()).subscribe();
-  setInterval(refreshMeas, 10000);
-  measRender(); refreshMeas();
+  $('mretrybtn').onclick = toolReset;
+  $('mclearbtn').onclick = async () => { await addEvent('clear'); toolReset(); };
+  toolRender();
 
   function show(which) {
     $('view-gm').hidden = which !== 'gm'; $('view-agg').hidden = which !== 'agg'; $('view-ans').hidden = which !== 'ans'; if (which === 'ans') ansRender();

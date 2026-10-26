@@ -114,14 +114,3 @@ select count(*)                                   as 記録の総数,
        sum(points)                                as 全チームの総得点
 from public.events;
 
-
--- ------------------------------------------------------------
--- ⑦ 個人の測定記録（出席番号ごとの最高記録）
--- ------------------------------------------------------------
-select student as 出席番号,
-       max(value) filter (where kind = 'grip')     as 握力_kg,
-       max(value) filter (where kind = 'sitreach') as 長座体前屈_cm,
-       count(*)                                    as 測った回数
-from public.measurements
-group by student
-order by student;
